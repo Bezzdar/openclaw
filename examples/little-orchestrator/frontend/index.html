@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Little + OpenClaw</title>
+    <style>
+      body { font-family: Arial, sans-serif; max-width: 860px; margin: 32px auto; }
+      textarea { width: 100%; min-height: 140px; }
+      pre { background: #f6f6f6; padding: 12px; white-space: pre-wrap; }
+    </style>
+  </head>
+  <body>
+    <h1>Little Regulation Assistant</h1>
+    <textarea id="q" placeholder="Введите запрос по регламенту"></textarea>
+    <br /><br />
+    <button id="send">Отправить</button>
+    <h3>Ответ</h3>
+    <pre id="out"></pre>
+
+    <script>
+      document.getElementById('send').onclick = async () => {
+        const message = document.getElementById('q').value.trim();
+        if (!message) return;
+        const out = document.getElementById('out');
+        out.textContent = 'Загрузка...';
+        const r = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ message })
+        });
+        const data = await r.json();
+        out.textContent = data.text || data.error || '(пусто)';
+      };
+    </script>
+  </body>
+</html>
