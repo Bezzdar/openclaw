@@ -1,0 +1,23 @@
+services:
+  gateway-portal:
+    # Используем тот же Dockerfile, но остановимся на этапе установки зависимостей
+    build:
+      context: .
+      target: deps
+    
+    # Главная магия: команда запуска меняется на режим разработки
+    command: sh -c "corepack enable pnpm && pnpm run dev"
+    
+    # Пробрасываем файлы с вашего диска внутрь контейнера
+    volumes:
+      - .:/app                 # Ваша папка становится папкой /app внутри
+      - /app/node_modules      # Исключаем папку node_modules (пусть она живет своей жизнью внутри контейнера)
+      - /app/.next             # Исключаем папку сборки (чтобы не конфликтовала)
+    
+    environment:
+      - NODE_ENV=development
+      # Включаем быстрый опрос файлов (иногда нужно для Docker)
+      - WATCHPACK_POLLING=true 
+    
+    ports:
+      - "8000:3000"

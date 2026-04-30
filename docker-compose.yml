@@ -1,78 +1,72 @@
 services:
-  openclaw-gateway:
-    image: ${OPENCLAW_IMAGE:-openclaw:local}
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    container_name: unified-elasticsearch
     environment:
-      HOME: /home/node
-      TERM: xterm-256color
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
-      OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
-      CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY:-}
-      CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY:-}
-      CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE:-}
-      TZ: ${OPENCLAW_TZ:-UTC}
-    volumes:
-      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
-      - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
-      ## Uncomment the lines below to enable sandbox isolation
-      ## (agents.defaults.sandbox). Requires Docker CLI in the image
-      ## (build with --build-arg OPENCLAW_INSTALL_DOCKER_CLI=1) or use
-      ## scripts/docker/setup.sh with OPENCLAW_SANDBOX=1 for automated setup.
-      ## Set DOCKER_GID to the host's docker group GID (run: stat -c '%g' /var/run/docker.sock).
-      # - /var/run/docker.sock:/var/run/docker.sock
-    # group_add:
-    #   - "${DOCKER_GID:-999}"
+      - node.name=elasticsearch
+      - cluster.name=unified-es-cluster
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - xpack.security.http.ssl.enabled=false
+      - xpack.security.transport.ssl.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+      - path.repo=/usr/share/elasticsearch/backup
     ports:
-      - "${OPENCLAW_GATEWAY_PORT:-18789}:18789"
-      - "${OPENCLAW_BRIDGE_PORT:-18790}:18790"
-    init: true
-    restart: unless-stopped
-    command:
-      [
-        "node",
-        "dist/index.js",
-        "gateway",
-        "--bind",
-        "${OPENCLAW_GATEWAY_BIND:-lan}",
-        "--port",
-        "18789",
-      ]
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "node",
-          "-e",
-          "fetch('http://127.0.0.1:18789/healthz').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))",
-        ]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 20s
-
-  openclaw-cli:
-    image: ${OPENCLAW_IMAGE:-openclaw:local}
-    network_mode: "service:openclaw-gateway"
-    cap_drop:
-      - NET_RAW
-      - NET_ADMIN
-    security_opt:
-      - no-new-privileges:true
-    environment:
-      HOME: /home/node
-      TERM: xterm-256color
-      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN:-}
-      OPENCLAW_ALLOW_INSECURE_PRIVATE_WS: ${OPENCLAW_ALLOW_INSECURE_PRIVATE_WS:-}
-      BROWSER: echo
-      CLAUDE_AI_SESSION_KEY: ${CLAUDE_AI_SESSION_KEY:-}
-      CLAUDE_WEB_SESSION_KEY: ${CLAUDE_WEB_SESSION_KEY:-}
-      CLAUDE_WEB_COOKIE: ${CLAUDE_WEB_COOKIE:-}
-      TZ: ${OPENCLAW_TZ:-UTC}
+      - "9200:9200"
     volumes:
-      - ${OPENCLAW_CONFIG_DIR}:/home/node/.openclaw
-      - ${OPENCLAW_WORKSPACE_DIR}:/home/node/.openclaw/workspace
-    stdin_open: true
-    tty: true
-    init: true
-    entrypoint: ["node", "dist/index.js"]
+      - es-data:/usr/share/elasticsearch/data
+      - ./mart_meet/elasticServer/es_backups:/usr/share/elasticsearch/backup
+
+  rag-backend:
+    build:
+      context: ./Little-main/backend
+      dockerfile: Dockerfile
+    container_name: unified-rag-backend
+    env_file:
+      - ./.env
+    ports:
+      - "8000:8000"
     depends_on:
-      - openclaw-gateway
+      - elasticsearch
+
+  cognee-api:
+    build:
+      context: ./cognee-main
+      dockerfile: Dockerfile
+    container_name: unified-cognee-api
+    environment:
+      - ENV=local
+      - CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8000
+      - REQUIRE_AUTHENTICATION=false
+      - ENABLE_BACKEND_ACCESS_CONTROL=false
+      - LLM_PROVIDER=ollama
+      - LLM_MODEL=qwen3.5:4b
+      - LLM_ENDPOINT=http://10.0.10.153:11434/v1
+      - LLM_API_KEY=ollama
+      - EMBEDDING_PROVIDER=ollama
+      - EMBEDDING_MODEL=qwen3-embedding:0.6b
+      - EMBEDDING_DIMENSIONS=1024
+      - EMBEDDING_ENDPOINT=http://10.0.10.153:11434/v1/embeddings
+      - HUGGINGFACE_TOKENIZER=Qwen/Qwen3-Embedding-0.6B
+    ports:
+      - "8001:8000"
+    volumes:
+      - ./data/cognee/databases:/app/cognee/.cognee_system/databases
+      - ./data/cognee/logs:/app/logs
+    profiles:
+      - cognee
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:8.15.0
+    container_name: unified-kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+    profiles:
+      - debug
+
+volumes:
+  es-data:

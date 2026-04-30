@@ -1,0 +1,9 @@
+services:
+  gateway-portal:
+    build: .
+    container_name: gateway_app
+    restart: always
+    ports:
+      - "8000:3000"
+    env_file:
+      - .env
