@@ -32,6 +32,75 @@ export {
 
 const log = createSubsystemLogger("agents/agent-command");
 
+type RegulationPromptSpec = {
+  regulationType: string;
+  requirements: string[];
+  allowedTools?: string[];
+};
+
+function buildRegulationSystemPromptFromEnv(): string | undefined {
+  const raw = process.env.OPENCLAW_REGULATION_POLICY_JSON?.trim();
+  if (!raw) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(raw) as RegulationPromptSpec[];
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      return undefined;
+    }
+    const normalized = parsed
+      .map((item) => ({
+        regulationType: typeof item?.regulationType === "string" ? item.regulationType.trim() : "",
+        requirements: Array.isArray(item?.requirements)
+          ? item.requirements.map((entry) => entry.trim()).filter(Boolean)
+          : [],
+        allowedTools: Array.isArray(item?.allowedTools)
+          ? item.allowedTools.map((entry) => entry.trim()).filter(Boolean)
+          : [],
+      }))
+      .filter((item) => item.regulationType && item.requirements.length > 0)
+      .toSorted((a, b) => a.regulationType.localeCompare(b.regulationType));
+    if (normalized.length === 0) {
+      return undefined;
+    }
+    const lines: string[] = [
+      "## Little Regulation Policy",
+      "Classify the request into one regulation type before tool usage.",
+      "Ask only minimal clarifying questions if regulation type is ambiguous.",
+      "Apply the selected regulation requirements as hard constraints.",
+      "",
+    ];
+    for (const spec of normalized) {
+      lines.push(`### ${spec.regulationType}`);
+      lines.push("Requirements:");
+      for (const requirement of spec.requirements) {
+        lines.push(`- ${requirement}`);
+      }
+      if (spec.allowedTools.length > 0) {
+        lines.push(
+          `Allowed tools: ${spec.allowedTools.toSorted((a, b) => a.localeCompare(b)).join(", ")}`,
+        );
+      }
+      lines.push("");
+    }
+    lines.push(
+      "When selecting tools, prefer website-compatible tools (API/search/message/canvas) and avoid host-local tooling unless explicitly required.",
+      "",
+    );
+    return lines.join("\n");
+  } catch {
+    return undefined;
+  }
+}
+
+function composeExtraSystemPrompt(extraSystemPrompt?: string): string | undefined {
+  const parts = [extraSystemPrompt?.trim(), buildRegulationSystemPromptFromEnv()].filter(Boolean);
+  if (parts.length === 0) {
+    return undefined;
+  }
+  return parts.join("\n\n");
+}
+
 const ACP_TRANSCRIPT_USAGE = {
   input: 0,
   output: 0,
@@ -248,6 +317,7 @@ export function runAgentAttempt(params: {
     isFallbackRetry: params.isFallbackRetry,
     sessionHasHistory: params.sessionHasHistory,
   });
+  const composedExtraSystemPrompt = composeExtraSystemPrompt(params.opts.extraSystemPrompt);
   const bootstrapPromptWarningSignaturesSeen = resolveBootstrapWarningSignaturesSeen(
     params.sessionEntry?.systemPromptReport,
   );
@@ -273,7 +343,7 @@ export function runAgentAttempt(params: {
         thinkLevel: params.resolvedThinkLevel,
         timeoutMs: params.timeoutMs,
         runId: params.runId,
-        extraSystemPrompt: params.opts.extraSystemPrompt,
+        extraSystemPrompt: composedExtraSystemPrompt,
         cliSessionId: nextCliSessionId,
         cliSessionBinding:
           nextCliSessionId === cliSessionBinding?.sessionId ? cliSessionBinding : undefined,
@@ -386,7 +456,7 @@ export function runAgentAttempt(params: {
     runId: params.runId,
     lane: params.opts.lane,
     abortSignal: params.opts.abortSignal,
-    extraSystemPrompt: params.opts.extraSystemPrompt,
+    extraSystemPrompt: composedExtraSystemPrompt,
     bootstrapContextMode: params.opts.bootstrapContextMode,
     bootstrapContextRunKind: params.opts.bootstrapContextRunKind,
     internalEvents: params.opts.internalEvents,
